@@ -16,6 +16,7 @@ import { ProjectCardSkeletonList, ProposalSkeletonList } from '@/components/skel
 import { DownloadReceiptButton } from '@/components/DownloadReceiptButton';
 import { ProjectFilterBar } from '@/components/ProjectFilterBar';
 import { CryptoId } from '@/components/ui/CryptoId';
+import { ProjectActionsDropdown } from '@/components/ProjectActionsDropdown';
 import { usePersistentTab, usePersistentFilter } from '@/hooks/usePersistentTab';
 import {
   CounterOfferSummary,
@@ -617,6 +618,10 @@ export function FreelancerDashboard() {
                           {proj.budget} {proj.token || 'USDC'}
                         </span>
                         {renderProjectActionBadge(proj, false)}
+                        <ProjectActionsDropdown
+                          project={proj}
+                          onView={() => setViewingProjectDetails(proj)}
+                        />
                       </div>
                     </div>
 

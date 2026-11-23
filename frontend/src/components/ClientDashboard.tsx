@@ -46,6 +46,7 @@ import {
   PendingSignaturesDrawer,
 } from '@/components/MultisigApprovalModal';
 import type { PendingMultisigRequest } from '@/store/walletStore';
+import { ProjectActionsDropdown } from '@/components/ProjectActionsDropdown';
 
 export interface ClientDashboardProps {
   defaultTab?: 'projects' | 'create' | 'applicants' | 'saved';
@@ -954,6 +955,10 @@ export function ClientDashboard({ defaultTab = 'projects' }: ClientDashboardProp
                     </div>
 
                     <div className="self-start sm:self-center flex flex-col items-end gap-1.5">
+                      <ProjectActionsDropdown
+                        project={proj}
+                        onView={() => router.push(`/projects/${proj.id}`)}
+                      />
                       <div className="flex items-center gap-1.5">
                         <button
                           type="button"
