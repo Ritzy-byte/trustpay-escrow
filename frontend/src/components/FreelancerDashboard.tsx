@@ -4,7 +4,8 @@ import React, { useState, useEffect } from 'react';
 import NumberRoll from './NumberRoll';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
-import { useWalletStore, canSubmitProposal } from '@/store/walletStore';
+import { useWalletStore, canSubmitProposal, canRaiseDispute } from '@/store/walletStore';
+import { raiseDisputeOnChain } from '@/lib/soroban';
 import { authFetch } from '@/lib/api';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 
@@ -17,6 +18,7 @@ import { DownloadReceiptButton } from '@/components/DownloadReceiptButton';
 import { ProjectFilterBar } from '@/components/ProjectFilterBar';
 import { CryptoId } from '@/components/ui/CryptoId';
 import { ProjectActionsDropdown } from '@/components/ProjectActionsDropdown';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import { usePersistentTab, usePersistentFilter } from '@/hooks/usePersistentTab';
 import {
   CounterOfferSummary,
@@ -37,6 +39,44 @@ export function FreelancerDashboard() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [proposals, setProposals] = useState<Proposal[]>([]);
   const [lightboxImage, setLightboxImage] = useState<{ url: string; name?: string } | null>(null);
+
+  // Dispute confirmation (ConfirmModal)
+  const [disputeTarget, setDisputeTarget] = useState<Project | null>(null);
+
+  const getDisputeBlockReason = (proj: Project): string | undefined => {
+    if (proj.project_id_onchain === undefined || proj.project_id_onchain === null) {
+      return 'No on-chain escrow to dispute yet';
+    }
+    if (proj.status === 'disputed') return 'A dispute is already open';
+    if (proj.status === 'completed') return 'Completed projects cannot be disputed';
+    if (!canRaiseDispute(proj, address)) return 'Only the client or assigned freelancer can raise a dispute';
+    return undefined;
+  };
+
+  const handleConfirmDispute = async () => {
+    if (!disputeTarget) return;
+    if (!address) {
+      toast.error('Please connect your wallet first.');
+      return;
+    }
+    try {
+      await raiseDisputeOnChain({
+        callerAddress: address,
+        projectIdOnChain: disputeTarget.project_id_onchain as number | string | bigint,
+      });
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+      await authFetch(`${apiUrl}/api/projects/${disputeTarget.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'disputed' }),
+      });
+      toast.warning('Dispute raised! Funds are frozen until an arbiter rules.');
+      setDisputeTarget(null);
+      fetchBackendProjects();
+    } catch (err: any) {
+      toast.error(`Dispute failed: ${err?.message || err}`);
+    }
+  };
 
   // Counter-offer renegotiation (#150)
   const [reCounterTarget, setReCounterTarget] = useState<Proposal | null>(null);
@@ -621,6 +661,8 @@ export function FreelancerDashboard() {
                         <ProjectActionsDropdown
                           project={proj}
                           onView={() => setViewingProjectDetails(proj)}
+                          onDispute={() => setDisputeTarget(proj)}
+                          disputeDisabledReason={getDisputeBlockReason(proj)}
                         />
                       </div>
                     </div>
@@ -1215,6 +1257,20 @@ export function FreelancerDashboard() {
         senderAddress={chatModalState.senderAddress}
         receiverAddress={chatModalState.receiverAddress}
         recipientRoleLabel={chatModalState.recipientRoleLabel}
+      />
+
+      {/* Dispute confirmation */}
+      <ConfirmModal
+        isOpen={disputeTarget !== null}
+        onClose={() => setDisputeTarget(null)}
+        onConfirm={handleConfirmDispute}
+        level="danger"
+        title="Raise a dispute?"
+        impactSummary="This freezes all escrowed funds until an arbiter issues a ruling."
+        description={`Disputing “${disputeTarget?.title ?? ''}” locks the on-chain escrow. Only raise a dispute after trying to resolve the issue with the other party.`}
+        confirmText="DISPUTE"
+        confirmLabel="Raise dispute"
+        cancelLabel="Keep project"
       />
 
       {/* Rich Milestone Deliverable Submission Modal */}

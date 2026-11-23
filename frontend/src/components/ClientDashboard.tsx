@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import NumberRoll from './NumberRoll';
 import { toast } from 'sonner';
 import { useRouter } from 'next/navigation';
-import { useWalletStore, useActiveWalletAddress } from '@/store/walletStore';
+import { useWalletStore, useActiveWalletAddress, canRaiseDispute } from '@/store/walletStore';
 import { authFetch } from '@/lib/api';
 import { useEscapeKey } from '@/hooks/useEscapeKey';
 
@@ -41,7 +41,10 @@ import {
   setSorobanBaseFee,
   fetchMultisigAccountInfo,
   isMultisigAccount,
+  cancelUnassignedProjectOnChain,
+  raiseDisputeOnChain,
 } from '@/lib/soroban';
+import { ConfirmModal } from '@/components/ConfirmModal';
 import {
   MultisigApprovalModal,
   PendingSignaturesDrawer,
@@ -161,6 +164,78 @@ export function ClientDashboard({ defaultTab = 'projects' }: ClientDashboardProp
   // Proposal counter-offer negotiation (#150)
   const [counterOfferTarget, setCounterOfferTarget] = useState<ApplicantCardData | null>(null);
   const [counterOfferSubmitting, setCounterOfferSubmitting] = useState(false);
+
+  // Destructive project actions (cancel / dispute) confirmed through ConfirmModal
+  const [confirmAction, setConfirmAction] = useState<{
+    type: 'cancel' | 'dispute';
+    project: Project;
+  } | null>(null);
+
+  const getCancelBlockReason = (proj: Project): string | undefined => {
+    if (proj.status === 'completed') return 'Completed projects cannot be cancelled';
+    if (proj.status === 'disputed') return 'Resolve the open dispute first';
+    if (proj.freelancer_address) {
+      return 'A freelancer is assigned — use mutual cancellation instead';
+    }
+    return undefined;
+  };
+
+  const getDisputeBlockReason = (proj: Project): string | undefined => {
+    if (proj.project_id_onchain === undefined || proj.project_id_onchain === null) {
+      return 'No on-chain escrow to dispute yet';
+    }
+    if (proj.status === 'disputed') return 'A dispute is already open';
+    if (proj.status === 'completed') return 'Completed projects cannot be disputed';
+    if (!canRaiseDispute(proj, address)) return 'Only the client or freelancer can raise a dispute';
+    return undefined;
+  };
+
+  const handleConfirmProjectAction = async () => {
+    if (!confirmAction) return;
+    if (!address) {
+      toast.error('Please connect your wallet first.');
+      return;
+    }
+    const { type, project } = confirmAction;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3001';
+    const hasOnChainEscrow =
+      project.project_id_onchain !== undefined && project.project_id_onchain !== null;
+    try {
+      if (type === 'cancel') {
+        if (hasOnChainEscrow) {
+          await cancelUnassignedProjectOnChain({
+            clientAddress: address,
+            projectIdOnChain: project.project_id_onchain as number | string | bigint,
+          });
+        }
+        const res = await authFetch(`${apiUrl}/api/projects/${project.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'cancelled' }),
+        });
+        if (res.ok) {
+          toast.success('Project cancelled' + (hasOnChainEscrow ? ' and escrow funds refunded.' : '.'));
+        } else {
+          toast.warning('Escrow cancelled on-chain, but the project record could not be updated.');
+        }
+      } else {
+        await raiseDisputeOnChain({
+          callerAddress: address,
+          projectIdOnChain: project.project_id_onchain as number | string | bigint,
+        });
+        await authFetch(`${apiUrl}/api/projects/${project.id}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'disputed' }),
+        });
+        toast.warning('Dispute raised! Funds are frozen until an arbiter rules.');
+      }
+      setConfirmAction(null);
+      await fetchBackendProjects();
+    } catch (err: any) {
+      toast.error(`${type === 'cancel' ? 'Cancellation' : 'Dispute'} failed: ${err?.message || err}`);
+    }
+  };
 
   // Detect whether the connected enterprise account requires multiple signers (#multisig)
   useEffect(() => {
@@ -960,6 +1035,10 @@ export function ClientDashboard({ defaultTab = 'projects' }: ClientDashboardProp
                       <ProjectActionsDropdown
                         project={proj}
                         onView={() => router.push(`/projects/${proj.id}`)}
+                        onDispute={() => setConfirmAction({ type: 'dispute', project: proj })}
+                        onCancel={() => setConfirmAction({ type: 'cancel', project: proj })}
+                        disputeDisabledReason={getDisputeBlockReason(proj)}
+                        cancelDisabledReason={getCancelBlockReason(proj)}
                       />
                       <div className="flex items-center gap-1.5">
                         <button
@@ -1993,6 +2072,28 @@ export function ClientDashboard({ defaultTab = 'projects' }: ClientDashboardProp
         isSubmitting={counterOfferSubmitting}
         onClose={() => setCounterOfferTarget(null)}
         onSubmit={handleSubmitCounterOffer}
+      />
+
+      {/* Destructive action confirmation (cancel escrow / raise dispute) */}
+      <ConfirmModal
+        isOpen={confirmAction !== null}
+        onClose={() => setConfirmAction(null)}
+        onConfirm={handleConfirmProjectAction}
+        level="danger"
+        title={confirmAction?.type === 'cancel' ? 'Cancel this project?' : 'Raise a dispute?'}
+        impactSummary={
+          confirmAction?.type === 'cancel'
+            ? 'This permanently cancels the project and cannot be undone.'
+            : 'This freezes all escrowed funds until an arbiter issues a ruling.'
+        }
+        description={
+          confirmAction?.type === 'cancel'
+            ? `“${confirmAction.project.title}” will be closed and any deposited escrow funds are refunded to your wallet.`
+            : `Disputing “${confirmAction?.project.title ?? ''}” locks the on-chain escrow. Only raise a dispute after trying to resolve the issue with the other party.`
+        }
+        confirmText={confirmAction?.type === 'cancel' ? 'CANCEL' : 'DISPUTE'}
+        confirmLabel={confirmAction?.type === 'cancel' ? 'Cancel project' : 'Raise dispute'}
+        cancelLabel="Keep project"
       />
 
       {/* Multi-sig co-signing (enterprise treasury accounts) */}
