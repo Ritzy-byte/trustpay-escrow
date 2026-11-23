@@ -15,7 +15,8 @@ import { FreelancerProfileModal } from './FreelancerProfileModal';
 import { ProjectChatModal } from './ProjectChatModal';
 import { ProjectCardSkeletonList } from '@/components/skeletons';
 import { SUPPORTED_TOKENS } from '@/config/tokens';
-import { useTokenBalance, getBalanceShortfall } from '@/hooks/useCreateProjectForm';
+import { useTokenBalance, useTokenBalances, getBalanceShortfall } from '@/hooks/useCreateProjectForm';
+import { TokenSelector } from '@/components/TokenSelector';
 import { usePersistentTab } from '@/hooks/usePersistentTab';
 import { BalanceWarningBadge } from '@/components/BalanceWarningBadge';
 import { LiquidityDepthOptimizer } from '@/components/LiquidityDepthOptimizer';
@@ -54,7 +55,7 @@ export interface ClientDashboardProps {
 
 export function ClientDashboard({ defaultTab = 'projects' }: ClientDashboardProps) {
   const router = useRouter();
-  const { address, pendingMultisig } = useWalletStore();
+  const { address, pendingMultisig, targetNetwork } = useWalletStore();
   const activeWalletAddress = useActiveWalletAddress();
   const [isMultisig, setIsMultisig] = useState(false);
   const [showPendingDrawer, setShowPendingDrawer] = useState(false);
@@ -122,6 +123,7 @@ export function ClientDashboard({ defaultTab = 'projects' }: ClientDashboardProp
   const [configuredFeeStroops, setConfiguredFeeStroops] = useState<number>(100);
   const [fundingTxMessage, setFundingTxMessage] = useState('');
   const walletBalance = useTokenBalance(activeWalletAddress, formToken);
+  const tokenBalances = useTokenBalances(activeWalletAddress);
   const balanceShortfall = getBalanceShortfall(walletBalance.balance, formBudget === '' ? 0 : formBudget);
   const hasInsufficientBalance = walletBalance.balance !== null && balanceShortfall > 0;
   
@@ -1173,28 +1175,16 @@ export function ClientDashboard({ defaultTab = 'projects' }: ClientDashboardProp
               </div>
 
               {/* Grid: Escrow Currency, Total Budget & Overall Deadline */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="space-y-1.5">
-                  <label className="block text-xs sm:text-sm font-semibold text-[#e4e4e7]">
-                    Escrow Currency
-                  </label>
-                  <div className="relative">
-                    <select
-                      value={formToken}
-                      onChange={(e) => setFormToken(e.target.value as any)}
-                      className="w-full appearance-none px-4 py-3 bg-[#232326] border border-[#333338] rounded-xl text-white text-sm focus:outline-none focus:border-blue-500 transition-colors cursor-pointer"
-                    >
-                      <option value="USDC">USDC (USD Coin)</option>
-                      <option value="EURC">EURC (Euro Coin)</option>
-                      <option value="XLM">XLM (Stellar Lumens)</option>
-                      <option value="PYUSD">PYUSD (PayPal USD)</option>
-                    </select>
-                    <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-4 text-[#a1a1aa]">
-                      <svg className="w-4 h-4 fill-current" viewBox="0 0 20 20">
-                        <path d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" />
-                      </svg>
-                    </div>
-                  </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="space-y-1.5 sm:col-span-2">
+                  <TokenSelector
+                    label="Escrow Currency"
+                    value={formToken}
+                    onChange={setFormToken}
+                    balances={tokenBalances.balances}
+                    balancesLoading={tokenBalances.loading}
+                    network={targetNetwork}
+                  />
                 </div>
 
                 <div className="space-y-1.5">
