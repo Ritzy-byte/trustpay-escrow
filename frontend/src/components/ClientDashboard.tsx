@@ -38,7 +38,14 @@ import {
   getStellarExplorerUrl,
   DEFAULT_ESCROW_CONTRACT_ID,
   setSorobanBaseFee,
+  fetchMultisigAccountInfo,
+  isMultisigAccount,
 } from '@/lib/soroban';
+import {
+  MultisigApprovalModal,
+  PendingSignaturesDrawer,
+} from '@/components/MultisigApprovalModal';
+import type { PendingMultisigRequest } from '@/store/walletStore';
 
 export interface ClientDashboardProps {
   defaultTab?: 'projects' | 'create' | 'applicants' | 'saved';
@@ -46,8 +53,15 @@ export interface ClientDashboardProps {
 
 export function ClientDashboard({ defaultTab = 'projects' }: ClientDashboardProps) {
   const router = useRouter();
-  const { address } = useWalletStore();
+  const { address, pendingMultisig } = useWalletStore();
   const activeWalletAddress = useActiveWalletAddress();
+  const [isMultisig, setIsMultisig] = useState(false);
+  const [showPendingDrawer, setShowPendingDrawer] = useState(false);
+  const [multisigRequest, setMultisigRequest] = useState<PendingMultisigRequest | null>(null);
+  const [showMultisigModal, setShowMultisigModal] = useState(false);
+  const accountPendingMultisig = pendingMultisig.filter(
+    (r) => r.accountAddress === activeWalletAddress
+  );
   const { starred, isStarred, toggle: toggleStarred, setNotes: setStarredNotes } =
     useStarredFreelancers(activeWalletAddress);
   const [activeTab, setActiveTab] = usePersistentTab<"projects" | "create" | "applicants" | "saved">({
@@ -144,6 +158,25 @@ export function ClientDashboard({ defaultTab = 'projects' }: ClientDashboardProp
   // Proposal counter-offer negotiation (#150)
   const [counterOfferTarget, setCounterOfferTarget] = useState<ApplicantCardData | null>(null);
   const [counterOfferSubmitting, setCounterOfferSubmitting] = useState(false);
+
+  // Detect whether the connected enterprise account requires multiple signers (#multisig)
+  useEffect(() => {
+    let cancelled = false;
+    if (!activeWalletAddress) {
+      setIsMultisig(false);
+      return;
+    }
+    fetchMultisigAccountInfo(activeWalletAddress)
+      .then((info) => {
+        if (!cancelled) setIsMultisig(isMultisigAccount(info));
+      })
+      .catch(() => {
+        if (!cancelled) setIsMultisig(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWalletAddress]);
 
   // Function to fetch real projects from backend
   const fetchBackendProjects = async (pageToFetch = currentPage) => {
@@ -807,6 +840,17 @@ export function ClientDashboard({ defaultTab = 'projects' }: ClientDashboardProp
                 <NumberRoll value={projects.length} /> <span>{projects.length === 1 ? 'project' : 'projects'}</span>
               </h2>
               <div className="flex items-center gap-2">
+                {(isMultisig || accountPendingMultisig.length > 0) && (
+                  <button
+                    type="button"
+                    data-testid="pending-signatures-button"
+                    onClick={() => setShowPendingDrawer(true)}
+                    className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 font-medium text-xs rounded-xl border border-amber-500/30 transition-all"
+                    title="Transactions waiting for co-signers on your multi-sig account"
+                  >
+                    <span>✍️ Pending Signatures ({accountPendingMultisig.length})</span>
+                  </button>
+                )}
                 <button
                   onClick={() => setShowApExportModal(true)}
                   className="inline-flex items-center space-x-1.5 px-3.5 py-2 bg-[#232326] hover:bg-[#2d2d33] text-[#e4e4e7] font-medium text-xs rounded-xl border border-[#333338] transition-all"
@@ -1954,6 +1998,32 @@ export function ClientDashboard({ defaultTab = 'projects' }: ClientDashboardProp
         isSubmitting={counterOfferSubmitting}
         onClose={() => setCounterOfferTarget(null)}
         onSubmit={handleSubmitCounterOffer}
+      />
+
+      {/* Multi-sig co-signing (enterprise treasury accounts) */}
+      <PendingSignaturesDrawer
+        isOpen={showPendingDrawer}
+        onClose={() => setShowPendingDrawer(false)}
+        requests={accountPendingMultisig}
+        onSelect={(req) => {
+          setMultisigRequest(req);
+          setShowPendingDrawer(false);
+          setShowMultisigModal(true);
+        }}
+      />
+      <MultisigApprovalModal
+        isOpen={showMultisigModal}
+        onClose={() => setShowMultisigModal(false)}
+        accountAddress={activeWalletAddress}
+        request={
+          multisigRequest
+            ? pendingMultisig.find((r) => r.id === multisigRequest.id) || multisigRequest
+            : null
+        }
+        onSubmitted={() => {
+          setMultisigRequest(null);
+          void fetchBackendProjects();
+        }}
       />
 
       {/* Enterprise Accounts Payable Export Modal */}
